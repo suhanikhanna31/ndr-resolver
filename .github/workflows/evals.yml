@@ -1,0 +1,15 @@
+name: llm-evals
+on:
+  workflow_dispatch:
+  schedule: [{ cron: "0 3 * * *" }]
+jobs:
+  evals:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install -r requirements.txt
+      # Gated: fails the job if accuracy or unsafe-action rate regress
+      - run: python -m evals.run_evals --provider anthropic --min-accuracy 0.90 --max-unsafe 0.0
+        env: { ANTHROPIC_API_KEY: "${{ secrets.ANTHROPIC_API_KEY }}" }
