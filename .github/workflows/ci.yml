@@ -3,11 +3,28 @@ on: [push, pull_request]
 jobs:
   test:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env: { POSTGRES_USER: ndr, POSTGRES_PASSWORD: ndr, POSTGRES_DB: ndr }
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U ndr" --health-interval 5s --health-timeout 5s --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping" --health-interval 5s --health-timeout 3s --health-retries 10
+    env:
+      DATABASE_URL: postgresql://ndr:ndr@localhost:5432/ndr
+      REDIS_URL: redis://localhost:6379
+      EMBEDDINGS_PROVIDER: fake   # deterministic vectors: tests the plumbing, not semantics
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with: { python-version: "3.12" }
       - run: pip install -r requirements.txt
+      # Unit + integration tests against real Postgres/pgvector and Redis
       - run: pytest -q
       # Pipeline sanity check with the free regex baseline (no API key needed)
       - run: python -m evals.run_evals --provider baseline --no-gate
