@@ -1,4 +1,4 @@
-# NDR Reply Resolver (v2)
+# NDR Reply Resolver
 
 Turns a customer's free-text or voice-transcript reply to a failed delivery (NDR) into a **safe, carrier-ready action**,
 and **learns from human corrections**. A prototype of the "LLM decision making + evals + feedback loop" layer behind
