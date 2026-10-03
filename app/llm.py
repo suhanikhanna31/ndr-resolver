@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import os
-from typing import Protocol
+from typing import Protocol, Sequence
+
+from pydantic import ValidationError
 
 from .prompts import SYSTEM_PROMPT, build_user_message
-from .schemas import Extraction, NDRRequest
+from .schemas import Extraction, NDRRequest, ResolvedExample
 
 TOOL_NAME = "record_extraction"
 
@@ -28,16 +30,25 @@ class AnthropicExtractor:
             "input_schema": Extraction.model_json_schema(),
         }
 
-    def extract(self, req: NDRRequest) -> Extraction:
-        resp = self.client.messages.create(
-            model=self.model,
-            max_tokens=400,
-            temperature=0,
-            system=SYSTEM_PROMPT,
-            tools=[self._tool],
-            tool_choice={"type": "tool", "name": TOOL_NAME},
-            messages=[{"role": "user", "content": build_user_message(req)}],
-        )
-        block = next(b for b in resp.content if b.type == "tool_use")
-        # ValidationError propagates: no blind retry at temperature 0, the resolver fails safe.
-        return Extraction.model_validate(block.input)
+    def extract(self, req: NDRRequest, examples: Sequence[ResolvedExample] = ()) -> Extraction:
+        # Current SDKs no longer accept sampling params like temperature, so reliability comes from the
+        # forced tool call + schema validation, not from the sampler. One bounded retry covers rare
+        # malformed output; after that the exception propagates and the resolver fails safe.
+        last: Exception | None = None
+        for _ in range(2):
+            resp = self.client.messages.create(
+                model=self.model,
+                max_tokens=400,
+                system=SYSTEM_PROMPT,
+                tools=[self._tool],
+                tool_choice={"type": "tool", "name": TOOL_NAME},
+                messages=[{"role": "user", "content": build_user_message(req, examples)}],
+            )
+            block = next((b for b in resp.content if b.type == "tool_use"), None)
+            try:
+                if block is None:
+                    raise ValueError("model returned no tool_use block")
+                return Extraction.model_validate(block.input)
+            except (ValidationError, ValueError) as e:
+                last = e
+        raise last  # type: ignore[misc]
