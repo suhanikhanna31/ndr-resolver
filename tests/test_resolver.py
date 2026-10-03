@@ -2,9 +2,10 @@ import pytest
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
-from app.main import app, get_extractor
+from app.main import app, get_service
 from app.resolver import decide, resolve
 from app.schemas import CarrierAction, Extraction, Intent, NDRRequest
+from app.service import DecisionService
 
 REQ = dict(awb="T1", ndr_reason="customer_unavailable", customer_utterance="x",
            received_at="2026-10-03T11:00:00+05:30")
@@ -64,12 +65,38 @@ def test_extractor_failure_fails_safe():
     assert d.action is CarrierAction.ESCALATE_HUMAN and "extraction_failed" in d.reasons[0]
 
 
-def test_api_endpoint():
-    class Stub:
-        def extract(self, req):
-            return ext(Intent.RESCHEDULE, date_expression="tomorrow")
+class StubExtractor:
+    def extract(self, req):
+        return ext(Intent.RESCHEDULE, date_expression="tomorrow")
 
-    app.dependency_overrides[get_extractor] = lambda: Stub()
-    r = TestClient(app).post("/v1/ndr/resolve", json=REQ)
+
+def _client():
+    app.dependency_overrides[get_service] = lambda: DecisionService(StubExtractor())
+    return TestClient(app)
+
+
+def test_api_endpoint():
+    r = _client().post("/v1/ndr/resolve", json=REQ)
     app.dependency_overrides.clear()
     assert r.status_code == 200 and r.json()["action"] == "reattempt"
+
+
+def test_api_key_enforced_when_configured(monkeypatch):
+    monkeypatch.setenv("API_KEY", "secret")
+    c = _client()
+    assert c.post("/v1/ndr/resolve", json=REQ).status_code == 401
+    assert c.post("/v1/ndr/resolve", json=REQ, headers={"X-API-Key": "secret"}).status_code == 200
+    app.dependency_overrides.clear()
+
+
+def test_jobs_and_stats_503_without_infra():
+    c = _client()
+    app.state.queue = None
+    assert c.post("/v1/ndr/jobs", json=REQ).status_code == 503
+    assert c.get("/v1/stats").status_code == 503
+    app.dependency_overrides.clear()
+
+
+def test_awb_is_validated():
+    assert _client().post("/v1/ndr/resolve", json={**REQ, "awb": "../etc/passwd"}).status_code == 422
+    app.dependency_overrides.clear()
