@@ -1,40 +1,104 @@
-import json
+from __future__ import annotations
+
 import logging
-import time
+import os
+import secrets
+from contextlib import asynccontextmanager
 
-from fastapi import Depends, FastAPI
+from arq import create_pool
+from arq.connections import RedisSettings
+from arq.jobs import Job, JobStatus
+from fastapi import APIRouter, Depends, FastAPI, Header, HTTPException, Request, Response
 
-from .llm import AnthropicExtractor, Extractor
-from .resolver import resolve
-from .schemas import Decision, NDRRequest
+from .config import get_settings
+from .schemas import Decision, FeedbackRequest, NDRRequest
+from .service import DecisionService, build_service
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
-log = logging.getLogger("ndr")
-app = FastAPI(title="NDR Reply Resolver", version="0.1.0")
-
-_extractor: Extractor | None = None
 
 
-def get_extractor() -> Extractor:
-    global _extractor
-    if _extractor is None:
-        _extractor = AnthropicExtractor()
-    return _extractor
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    s = get_settings()
+    app.state.service = await build_service(s)
+    app.state.queue = await create_pool(RedisSettings.from_dsn(s.redis_url)) if s.redis_url else None
+    yield
+    if app.state.queue:
+        await app.state.queue.aclose()
+    await app.state.service.close()
+
+
+app = FastAPI(title="NDR Reply Resolver", version="0.2.0", lifespan=lifespan)
+
+
+def require_key(x_api_key: str | None = Header(default=None)) -> None:
+    expected = os.getenv("API_KEY")
+    if expected and not (x_api_key and secrets.compare_digest(x_api_key, expected)):
+        raise HTTPException(401, "invalid or missing X-API-Key")
+
+
+def get_service(request: Request) -> DecisionService:
+    return request.app.state.service
+
+
+def get_queue(request: Request):
+    if request.app.state.queue is None:
+        raise HTTPException(503, "queue not configured: set REDIS_URL")
+    return request.app.state.queue
+
+
+router = APIRouter(prefix="/v1", dependencies=[Depends(require_key)])
 
 
 @app.get("/healthz")
-def healthz():
+async def healthz():
     return {"ok": True}
 
 
-# Sync endpoint on purpose: FastAPI runs it in a threadpool, which suits the sync SDK client.
-@app.post("/v1/ndr/resolve", response_model=Decision)
-def resolve_ndr(req: NDRRequest, extractor: Extractor = Depends(get_extractor)) -> Decision:
-    t0 = time.perf_counter()
-    decision = resolve(req, extractor)
-    # Log decisions, never the raw utterance: it can contain addresses and phone numbers (PII).
-    log.info(json.dumps({
-        "awb": req.awb, "action": decision.action.value, "needs_human": decision.needs_human,
-        "reasons": decision.reasons, "latency_ms": round((time.perf_counter() - t0) * 1000),
-    }))
-    return decision
+@router.post("/ndr/resolve", response_model=Decision)
+async def resolve_ndr(req: NDRRequest, svc: DecisionService = Depends(get_service)) -> Decision:
+    """Synchronous path for latency-sensitive callers."""
+    return await svc.handle(req)
+
+
+@router.post("/ndr/jobs", status_code=202)
+async def submit_job(req: NDRRequest, response: Response, queue=Depends(get_queue)):
+    """Async path for webhooks. Job id = awb:attempt, so duplicate deliveries are no-ops."""
+    job_id = f"{req.awb}:{req.attempt_number}"
+    job = await queue.enqueue_job("process_ndr", req.model_dump(mode="json"), _job_id=job_id)
+    if job is None:
+        response.status_code = 200
+        return {"job_id": job_id, "status": "duplicate"}
+    return {"job_id": job_id, "status": "queued"}
+
+
+@router.get("/ndr/jobs/{job_id}")
+async def job_status(job_id: str, queue=Depends(get_queue)):
+    job = Job(job_id, redis=queue, _queue_name=queue.default_queue_name)
+    status = await job.status()
+    if status != JobStatus.complete:
+        return {"job_id": job_id, "status": status.value}
+    info = await job.result_info()
+    if not info.success:
+        return {"job_id": job_id, "status": "failed", "error": str(info.result)}
+    return {"job_id": job_id, "status": "complete", "decision": info.result}
+
+
+@router.post("/ndr/feedback")
+async def feedback(fb: FeedbackRequest, svc: DecisionService = Depends(get_service)):
+    """A human resolved (or overrode) a reply. Embed it so similar future replies get it as a few-shot example."""
+    if svc.store is None:
+        raise HTTPException(503, "feedback loop not configured: set DATABASE_URL")
+    indexed = await svc.add_feedback(fb)
+    return {"indexed": indexed, "note": None if indexed else "address text is PII and is never indexed"}
+
+
+@router.get("/stats")
+async def stats(days: int = 7, svc: DecisionService = Depends(get_service)):
+    """Escalation rate, confidence and p95 latency per intent, straight from SQL."""
+    if svc.repo is None:
+        raise HTTPException(503, "stats not configured: set DATABASE_URL")
+    return {"days": days, "by_intent": await svc.repo.stats(days)}
+
+
+app.include_router(router)
