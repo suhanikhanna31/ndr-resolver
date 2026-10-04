@@ -7,7 +7,7 @@ import time
 
 from .config import Settings, get_settings
 from .db import DecisionRepo
-from .llm import AnthropicExtractor, Extractor
+from .llm import Extractor, make_extractor
 from .resolver import resolve
 from .retrieval import ExampleStore, RetrievalAugmentedExtractor, make_embeddings
 from .schemas import Decision, FeedbackRequest, NDRRequest
@@ -54,7 +54,7 @@ class DecisionService:
 
 async def build_service(settings: Settings | None = None) -> DecisionService:
     s = settings or get_settings()
-    base = AnthropicExtractor()
+    base = make_extractor()
     if not s.database_url:
         return DecisionService(base)  # no DB: plain zero-shot extractor, no persistence
     repo = await DecisionRepo.open(s.database_url)
