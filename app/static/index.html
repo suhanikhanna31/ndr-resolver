@@ -1,0 +1,225 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NDR Resolver</title>
+<meta name="description" content="Turns a customer's reply to a failed delivery into a safe, carrier-ready action.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' fill='%23111'/%3E%3Crect x='30' y='30' width='40' height='40' fill='%23ee5a24'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Doto:wght@400;700;900&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+
+<header class="bar">
+  <a class="brand" href="#resolve"><span class="brand-mark"></span>NDR/RESOLVER</a>
+  <nav class="tabs" id="tabs" aria-label="Sections">
+    <button data-tab="resolve" class="on">Resolve</button>
+    <button data-tab="ledger">Ledger</button>
+    <button data-tab="stats">Stats</button>
+    <button data-tab="feedback">Feedback</button>
+    <button data-tab="spec">Spec</button>
+  </nav>
+  <div class="bar-right">
+    <span class="chip" id="chip-model" title="LLM provider and model"></span>
+    <span class="chip" id="chip-db" title="Postgres + pgvector">DB <i></i></span>
+    <span class="chip" id="chip-q" title="Redis queue">QUEUE <i></i></span>
+    <button class="btn ghost small" id="key-btn" type="button">API KEY</button>
+  </div>
+</header>
+
+<main>
+
+<!-- ============ RESOLVE ============ -->
+<section id="tab-resolve" class="tab on">
+  <div class="hero grid-bg">
+    <span class="plus tl"></span><span class="plus tr"></span><span class="plus bl"></span><span class="plus br"></span>
+    <div class="hero-meta"><span>V0.2.0</span><span>HI / EN / HINGLISH</span><span>IST</span></div>
+    <h1 class="dot">READ. <b>DECIDE.</b> ACT.</h1>
+    <p class="lede">A customer replies to a failed delivery. A language model reads it. Plain code decides what the carrier does. Anything doubtful goes to a human.</p>
+    <svg id="pipe" class="pipe" viewBox="0 0 900 120" role="img" aria-label="Pipeline: reply, retrieve, extract, validate, policy, action">
+      <g class="rail"><line x1="60" y1="60" x2="840" y2="60"/></g>
+      <g id="pipe-nodes"></g>
+    </svg>
+  </div>
+
+  <div class="split">
+    <form id="form" class="panel" autocomplete="off">
+      <div class="panel-h"><span>INPUT</span><span class="idx">001</span></div>
+
+      <label class="f">
+        <span class="lbl">CUSTOMER REPLY</span>
+        <textarea id="utt" rows="4" maxlength="2000" required placeholder="kal shaam ko bhej do, aaj ghar pe nahi hoon"></textarea>
+      </label>
+
+      <div class="presets">
+        <span class="lbl">TRY</span>
+        <div id="presets"></div>
+      </div>
+
+      <div class="row2">
+        <label class="f">
+          <span class="lbl">AWB</span>
+          <input id="awb" required pattern="[A-Za-z0-9_\-]{1,64}" value="DEMO-1001">
+        </label>
+        <label class="f">
+          <span class="lbl">ATTEMPT</span>
+          <input id="attempt" type="number" min="1" max="9" value="1" required>
+        </label>
+      </div>
+
+      <label class="f">
+        <span class="lbl">NDR REASON</span>
+        <select id="reason">
+          <option>customer_unavailable</option>
+          <option>incorrect_address</option>
+          <option>phone_unreachable</option>
+          <option>customer_refused</option>
+          <option>fake_delivery_attempt</option>
+        </select>
+      </label>
+
+      <div class="actions">
+        <button class="btn solid" id="go" type="submit">RESOLVE <span class="arrow">→</span></button>
+        <button class="btn ghost" id="go-async" type="button" title="POST /v1/ndr/jobs, then poll">QUEUE JOB</button>
+      </div>
+      <p class="note">Same AWB + attempt returns the stored decision with no new LLM call. Change the AWB to run a fresh one.</p>
+    </form>
+
+    <div class="panel" id="out">
+      <div class="panel-h"><span>OUTPUT</span><span class="idx" id="out-idx">002</span></div>
+      <div id="out-body" class="empty">
+        <svg class="parcel" viewBox="0 0 200 140" aria-hidden="true">
+          <g fill="none" stroke="currentColor" stroke-width="1">
+            <path d="M100 20 L170 55 L100 90 L30 55 Z"/>
+            <path d="M30 55 L30 100 L100 135 L100 90"/>
+            <path d="M170 55 L170 100 L100 135"/>
+            <path d="M65 37 L135 72" stroke-dasharray="3 3"/>
+            <path d="M100 20 L100 90" stroke-dasharray="2 4"/>
+          </g>
+          <g fill="currentColor"><rect x="60" y="100" width="22" height="3"/><rect x="60" y="106" width="14" height="3"/></g>
+        </svg>
+        <p>Awaiting input.<br>Decision, evidence and policy trace appear here.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ LEDGER ============ -->
+<section id="tab-ledger" class="tab">
+  <div class="sec-h"><h2 class="dot">LEDGER</h2><button class="btn ghost small" data-refresh="ledger">REFRESH ↻</button></div>
+  <p class="lede narrow">Every decision, newest first. Utterances, addresses and phone numbers are never shown here.</p>
+  <div class="panel flush"><div class="scroll" id="ledger-body"></div></div>
+</section>
+
+<!-- ============ STATS ============ -->
+<section id="tab-stats" class="tab">
+  <div class="sec-h">
+    <h2 class="dot">STATS</h2>
+    <label class="inline"><span class="lbl">WINDOW</span>
+      <select id="days"><option value="1">24 H</option><option value="7" selected>7 D</option><option value="30">30 D</option></select>
+    </label>
+  </div>
+  <p class="lede narrow">Escalation rate, average confidence and p95 latency per intent, computed in SQL.</p>
+  <div class="panel flush"><div class="scroll" id="stats-body"></div></div>
+</section>
+
+<!-- ============ FEEDBACK ============ -->
+<section id="tab-feedback" class="tab">
+  <div class="sec-h"><h2 class="dot">FEEDBACK</h2></div>
+  <p class="lede narrow">A human resolves a reply. It is embedded (phones and pincodes redacted) and shown to the model as a few-shot example next time a similar reply arrives.</p>
+  <form id="fb-form" class="panel narrow-panel" autocomplete="off">
+    <div class="panel-h"><span>HUMAN RESOLUTION</span><span class="idx">003</span></div>
+    <label class="f"><span class="lbl">CUSTOMER REPLY</span><textarea id="fb-utt" rows="3" maxlength="2000" required></textarea></label>
+    <div class="row2">
+      <label class="f"><span class="lbl">AWB</span><input id="fb-awb" required pattern="[A-Za-z0-9_\-]{1,64}" value="FB-1001"></label>
+      <label class="f"><span class="lbl">NDR REASON</span>
+        <select id="fb-reason">
+          <option>customer_unavailable</option><option>incorrect_address</option><option>phone_unreachable</option>
+          <option>customer_refused</option><option>fake_delivery_attempt</option>
+        </select>
+      </label>
+    </div>
+    <label class="f"><span class="lbl">CORRECT INTENT</span>
+      <select id="fb-intent">
+        <option>reschedule</option><option>address_correction</option><option>phone_correction</option>
+        <option>refuse_delivery</option><option>already_received</option><option>opt_out_or_abuse</option><option>unclear</option>
+      </select>
+    </label>
+    <div class="row2" id="fb-sched">
+      <label class="f"><span class="lbl">DATE</span>
+        <select id="fb-date">
+          <option value="">none</option><option>today</option><option>tomorrow</option><option>day_after_tomorrow</option>
+          <option>weekday:monday</option><option>weekday:tuesday</option><option>weekday:wednesday</option>
+          <option>weekday:thursday</option><option>weekday:friday</option><option>weekday:saturday</option><option>weekday:sunday</option>
+          <option value="in_days:2">in_days:2</option><option value="in_days:3">in_days:3</option>
+        </select>
+      </label>
+      <label class="f"><span class="lbl">TIME SLOT</span>
+        <select id="fb-slot"><option value="">none</option><option>morning</option><option>afternoon</option><option>evening</option></select>
+      </label>
+    </div>
+    <div class="actions"><button class="btn solid" type="submit">SAVE RESOLUTION <span class="arrow">→</span></button></div>
+    <p class="note" id="fb-msg" role="status"></p>
+  </form>
+</section>
+
+<!-- ============ SPEC ============ -->
+<section id="tab-spec" class="tab">
+  <div class="sec-h"><h2 class="dot">SPEC</h2></div>
+  <div class="spec-grid">
+    <div class="panel">
+      <div class="panel-h"><span>LIVE POLICY</span><span class="idx">004</span></div>
+      <div id="policy-body" class="kv"></div>
+    </div>
+    <div class="panel">
+      <div class="panel-h"><span>RULES, IN ORDER</span><span class="idx">005</span></div>
+      <ol class="rules">
+        <li><b>Opt-out or abuse</b> always goes to a human.</li>
+        <li><b>Unclear</b> intent always goes to a human.</li>
+        <li><b>Already received</b> goes to a human: possible fake delivery, check proof of delivery.</li>
+        <li><b>Confidence floor.</b> 0.75 for reversible actions, 0.90 for RTO, which cannot be undone.</li>
+        <li><b>Reschedule</b> needs a date inside the window and fewer than the max attempts.</li>
+        <li><b>Address change</b> needs a pincode and is never auto-pushed. A human verifies.</li>
+        <li><b>Phone change</b> must be a valid Indian mobile, checked in code.</li>
+        <li><b>Any failure</b> (API down, bad schema, no tool call) escalates. It never guesses.</li>
+      </ol>
+    </div>
+    <div class="panel wide">
+      <div class="panel-h"><span>LAYERS</span><span class="idx">006</span></div>
+      <table class="tbl"><tbody>
+        <tr><td>EXTRACTOR</td><td>Language understanding only. Forced tool call, schema-validated.</td></tr>
+        <tr><td>RETRIEVAL</td><td>Similar human-resolved cases become few-shot examples (pgvector).</td></tr>
+        <tr><td>POLICY</td><td>Every business rule, pure code, unit-tested.</td></tr>
+        <tr><td>PERSISTENCE</td><td>Decision log. Primary key (awb, attempt) is the idempotency key.</td></tr>
+        <tr><td>QUEUE</td><td>arq on Redis. Job id is awb:attempt, so duplicate webhooks are no-ops.</td></tr>
+      </tbody></table>
+    </div>
+  </div>
+</section>
+
+</main>
+
+<footer class="foot">
+  <span>NDR/RESOLVER · A PROTOTYPE OF THE DECISION LAYER BEHIND AN NDR VOICE AGENT</span>
+  <a href="/docs">API DOCS ↗</a>
+</footer>
+
+<dialog id="key-dlg">
+  <form method="dialog" id="key-form">
+    <div class="panel-h"><span>API KEY</span><span class="idx">AUTH</span></div>
+    <p class="note">This server requires an X-API-Key. It is kept in this tab's session storage only.</p>
+    <label class="f"><span class="lbl">X-API-KEY</span><input id="key-input" type="password" autocomplete="off"></label>
+    <div class="actions">
+      <button class="btn solid" value="save">SAVE</button>
+      <button class="btn ghost" value="cancel" formnovalidate>CANCEL</button>
+    </div>
+  </form>
+</dialog>
+
+<div id="toast" class="toast" role="status" aria-live="polite"></div>
+<script src="/app.js"></script>
+</body>
+</html>
