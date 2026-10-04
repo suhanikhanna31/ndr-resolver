@@ -33,6 +33,10 @@ an NDR voice agent like ClickPost's Parth.
 | API | Resolve, jobs, feedback, stats | `app/main.py` |
 | Evals | Golden set + regex baseline + CI gate | `evals/` |
 
+## Web UI
+Open `http://localhost:8000/` after `docker compose up`. Plain HTML/CSS/JS in `app/static/`, served by FastAPI itself, so there is no build step and no extra container.
+Tabs: **Resolve** (live pipeline, decision, evidence, confidence vs floor, send-to-feedback), **Ledger** (recent decisions, no PII), **Stats**, **Feedback**, **Spec** (live policy). If `API_KEY` is set the UI asks for it and keeps it in sessionStorage only.
+
 ## Endpoints
 | Method + path | Purpose |
 |---|---|
@@ -40,11 +44,20 @@ an NDR voice agent like ClickPost's Parth.
 | `POST /v1/ndr/jobs` | Async decision. `202 queued`, or `200 duplicate` for a repeated `awb:attempt` |
 | `GET /v1/ndr/jobs/{awb}:{attempt}` | `queued / in_progress / complete (+decision) / failed` |
 | `POST /v1/ndr/feedback` | A human resolved or overrode a reply. Embeds it for future retrieval |
+| `GET /v1/decisions?limit=50` | Recent decisions for the ledger (no utterances or payloads) |
+| `GET /v1/policy` | Live policy thresholds |
+| `GET /meta` | Public capability flags (auth required, DB, queue) used by the UI |
 | `GET /v1/stats?days=7` | Escalation rate, avg confidence, p95 latency per intent (SQL) |
+
+## Model provider
+The extractor is swappable behind one setting, `NDR_PROVIDER`: `gemini` (free tier via Google AI Studio, `GEMINI_API_KEY`, default model
+`gemini-2.5-flash-lite`) or `anthropic` (`ANTHROPIC_API_KEY`). Both fill the same schema and go through the same validation, so the policy
+layer, tests and UI do not change. A missing key fails loudly at startup instead of silently escalating every request. Gemini's free tier is
+rate limited: the app backs off on 429, and evals default to one worker for Gemini. Report which model produced any accuracy number.
 
 ## Run it
 ```bash
-cp .env.example .env            # add your ANTHROPIC_API_KEY
+cp .env.example .env            # set NDR_PROVIDER and the matching API key
 docker compose up --build       # postgres(pgvector) + redis + api + worker
 ```
 ```bash
@@ -66,7 +79,7 @@ service still works as a stateless zero-shot resolver (`/jobs`, `/feedback`, `/s
 ```bash
 pytest -q       # 24 offline tests; +3 integration tests when DATABASE_URL and REDIS_URL are set
 python -m evals.run_evals --provider baseline --no-gate   # free regex baseline
-python -m evals.run_evals --provider anthropic            # real model, gated
+python -m evals.run_evals --provider gemini --no-gate     # real model (or --provider anthropic), gated without --no-gate
 ```
 
 ## Key design choices
