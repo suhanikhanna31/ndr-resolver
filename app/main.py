@@ -4,13 +4,16 @@ import logging
 import os
 import secrets
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from arq import create_pool
 from arq.connections import RedisSettings
 from arq.jobs import Job, JobStatus
-from fastapi import APIRouter, Depends, FastAPI, Header, HTTPException, Request, Response
+from fastapi import APIRouter, Depends, FastAPI, Header, HTTPException, Query, Request, Response
+from fastapi.staticfiles import StaticFiles
 
 from .config import get_settings
+from .resolver import DEFAULT_POLICY
 from .schemas import Decision, FeedbackRequest, NDRRequest
 from .service import DecisionService, build_service
 
@@ -53,6 +56,32 @@ router = APIRouter(prefix="/v1", dependencies=[Depends(require_key)])
 @app.get("/healthz")
 async def healthz():
     return {"ok": True}
+
+
+@app.get("/meta")
+async def meta(request: Request):
+    """Public, non-sensitive capability flags so the UI knows what to enable and whether to ask for a key."""
+    return {"auth_required": bool(os.getenv("API_KEY")),
+            "persistence": request.app.state.service.repo is not None,
+            "queue": request.app.state.queue is not None,
+            "provider": os.getenv("NDR_PROVIDER", "anthropic").lower(),
+            "model": getattr(request.app.state.service.extractor, "model", None)
+                     or getattr(getattr(request.app.state.service.extractor, "base", None), "model", None),
+            "version": app.version}
+
+
+@router.get("/policy")
+async def policy():
+    """The live business-rule thresholds, read-only, for the UI spec sheet."""
+    return DEFAULT_POLICY.model_dump()
+
+
+@router.get("/decisions")
+async def decisions(limit: int = Query(50, ge=1, le=200), svc: DecisionService = Depends(get_service)):
+    """Recent decisions (no utterances, no payloads) for the ledger view."""
+    if svc.repo is None:
+        raise HTTPException(503, "ledger not configured: set DATABASE_URL")
+    return {"decisions": await svc.repo.recent(limit)}
 
 
 @router.post("/ndr/resolve", response_model=Decision)
@@ -102,3 +131,6 @@ async def stats(days: int = 7, svc: DecisionService = Depends(get_service)):
 
 
 app.include_router(router)
+
+# Frontend: plain static files, no build step. Mounted last so API routes always win.
+app.mount("/", StaticFiles(directory=Path(__file__).parent / "static", html=True), name="ui")
