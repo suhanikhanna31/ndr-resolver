@@ -40,6 +40,9 @@ def test_ledger_and_stats_503_without_database():
 
 def test_meta_is_public_and_reports_auth(monkeypatch):
     monkeypatch.setenv("API_KEY", "secret")
+    # CI provides a real DATABASE_URL/REDIS_URL, so clear them to test the stateless path deterministically
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.delenv("REDIS_URL", raising=False)
     with TestClient(app) as c:  # runs lifespan, so app.state is populated
         m = c.get("/meta").json()
         assert m["auth_required"] is True and m["persistence"] is False
