@@ -40,6 +40,16 @@ ORDER BY total DESC
 """
 
 
+RECENT_SQL = """
+SELECT awb, attempt_number, action, needs_human, intent, confidence, latency_ms, created_at,
+       COALESCE(decision->'reasons', '[]'::jsonb) AS reasons,
+       decision->>'reattempt_date' AS reattempt_date
+FROM decisions
+ORDER BY created_at DESC
+LIMIT %s
+"""
+
+
 class DecisionRepo:
     def __init__(self, pool: AsyncConnectionPool):
         self.pool = pool
@@ -89,3 +99,13 @@ class DecisionRepo:
             cur = conn.cursor(row_factory=dict_row)
             await cur.execute(STATS_SQL, (days,))
             return await cur.fetchall()
+
+    async def recent(self, limit: int = 50) -> list[dict[str, Any]]:
+        """Newest decisions for the ledger view. Deliberately omits payload/extraction (can hold PII)."""
+        async with self.pool.connection() as conn:
+            cur = conn.cursor(row_factory=dict_row)
+            await cur.execute(RECENT_SQL, (limit,))
+            rows = await cur.fetchall()
+        for r in rows:
+            r["created_at"] = r["created_at"].isoformat()
+        return rows
