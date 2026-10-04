@@ -1,6 +1,7 @@
 """Run the golden set through the full pipeline (LLM + policy) and gate on accuracy AND safety.
 
     python -m evals.run_evals --provider anthropic --model claude-haiku-4-5-20251001
+    python -m evals.run_evals --provider gemini --no-gate
 """
 from __future__ import annotations
 
@@ -22,6 +23,9 @@ def make_extractor(provider: str, model: str | None):
     if provider == "baseline":
         from .baseline import BaselineExtractor
         return BaselineExtractor()
+    if provider == "gemini":
+        from app.llm import GeminiExtractor
+        return GeminiExtractor(model=model)
     from app.llm import AnthropicExtractor
     return AnthropicExtractor(model=model)
 
@@ -39,10 +43,11 @@ def score(case, decision):
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--provider", choices=["anthropic", "baseline"], default="anthropic")
+    ap.add_argument("--provider", choices=["anthropic", "gemini", "baseline"], default="anthropic")
     ap.add_argument("--model", default=None)
     ap.add_argument("--cases", default=str(HERE / "golden.jsonl"))
-    ap.add_argument("--workers", type=int, default=4)
+    ap.add_argument("--workers", type=int, default=None,
+                    help="parallel calls (default 4, or 1 for gemini: the free tier is rate limited)")
     ap.add_argument("--min-accuracy", type=float, default=0.90)
     ap.add_argument("--max-unsafe", type=float, default=0.0)
     ap.add_argument("--no-gate", action="store_true", help="report only, always exit 0")
@@ -50,13 +55,14 @@ def main() -> int:
 
     cases = [json.loads(line) for line in Path(a.cases).read_text().splitlines() if line.strip()]
     extractor = make_extractor(a.provider, a.model)
+    workers = a.workers or (1 if a.provider == "gemini" else 4)
 
     def run(case):
         t0 = time.perf_counter()
         d = resolve(NDRRequest(**case["request"]), extractor)
         return case, d, (time.perf_counter() - t0) * 1000
 
-    with ThreadPoolExecutor(a.workers) as pool:
+    with ThreadPoolExecutor(workers) as pool:
         results = list(pool.map(run, cases))
 
     rows, correct_n, unsafe_n = [], 0, 0
@@ -79,7 +85,7 @@ def main() -> int:
     out.mkdir(exist_ok=True)
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
     (out / f"{a.provider}-{stamp}.json").write_text(json.dumps(
-        {"provider": a.provider, "model": a.model, "accuracy": acc, "unsafe_rate": unsafe_rate, "rows": rows}, indent=2))
+        {"provider": a.provider, "model": getattr(extractor, "model", a.model), "accuracy": acc, "unsafe_rate": unsafe_rate, "rows": rows}, indent=2))
 
     if a.no_gate:
         return 0
