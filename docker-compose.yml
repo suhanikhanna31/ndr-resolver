@@ -1,9 +1,12 @@
-# docker compose up --build      (needs ANTHROPIC_API_KEY in .env or your shell)
+# docker compose up --build      (needs the key for your NDR_PROVIDER in .env: GEMINI_API_KEY or ANTHROPIC_API_KEY)
 x-app: &app
   build: .
   environment:
-    ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:?set ANTHROPIC_API_KEY in .env}
+    NDR_PROVIDER: ${NDR_PROVIDER:-anthropic}          # anthropic | gemini
+    ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
     NDR_MODEL: ${NDR_MODEL:-claude-haiku-4-5-20251001}
+    GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+    GEMINI_MODEL: ${GEMINI_MODEL:-gemini-2.5-flash-lite}
     DATABASE_URL: postgresql://ndr:ndr@postgres:5432/ndr
     REDIS_URL: redis://redis:6379
     EMBEDDINGS_PROVIDER: ${EMBEDDINGS_PROVIDER:-fastembed}
