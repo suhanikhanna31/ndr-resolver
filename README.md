@@ -47,7 +47,22 @@ Tabs: **Resolve** (live pipeline, decision, evidence, confidence vs floor, send-
 | `GET /v1/decisions?limit=50` | Recent decisions for the ledger (no utterances or payloads) |
 | `GET /v1/policy` | Live policy thresholds |
 | `GET /meta` | Public capability flags (auth required, DB, queue) used by the UI |
+| `GET/POST /webhooks/whatsapp` | WhatsApp Cloud API webhook: handshake + customer replies (HMAC-signed by Meta, not `X-API-Key`) |
+| `POST /v1/whatsapp/shipments` | Register `awb` + phone (+ outbound message id) so a reply can be tied back to a shipment |
 | `GET /v1/stats?days=7` | Escalation rate, avg confidence, p95 latency per intent (SQL) |
+
+## WhatsApp channel
+`app/whatsapp.py` is a thin adapter on the WhatsApp Cloud API. It adds a channel, not logic: the same `DecisionService` and policy decide, so every rule above applies unchanged.
+
+```
+customer reply on WhatsApp -> POST /webhooks/whatsapp -> verify X-Hub-Signature-256 -> look up shipment
+        -> DecisionService.handle -> confirmation text back to the customer
+```
+- **Signature check, fail closed.** The raw body is verified against `WHATSAPP_APP_SECRET` (HMAC-SHA256, constant-time compare). With no secret configured the endpoint returns 503, never accepts unsigned traffic.
+- **Fast 200, work in the background.** Meta retries slow webhooks, so the LLM call runs after the response. Each message id is processed once; replays are dropped.
+- **No AWB in a WhatsApp message.** The system that sends the outbound NDR message calls `POST /v1/whatsapp/shipments` with `awb`, `wa_id` and the outbound `message_id`. A reply is matched by the message it replies to (and must come from the same number), then by phone. Unknown senders get no reply.
+- **Replies only say what was done.** Anything escalated, low-confidence or address-related tells the customer a person will follow up; "will be returned" is sent only after a real RTO decision. Voice notes get a "please type" prompt.
+- **Not verified:** unit tests cover signing, handshake, dedup, matching and replies (16 tests, fake sender). It has not been run against Meta's live API, and the shipment lookup is in memory (lost on restart; swap in a Postgres-backed one with the same two methods).
 
 ## Model provider
 The extractor is swappable behind one setting, `NDR_PROVIDER`: `gemini` (free tier via Google AI Studio, `GEMINI_API_KEY`, default model
@@ -77,9 +92,10 @@ Without Docker: start Postgres (with the `vector` extension) and Redis yourself,
 service still works as a stateless zero-shot resolver (`/jobs`, `/feedback`, `/stats` return 503).
 
 ```bash
-pytest -q       # 24 offline tests; +3 integration tests when DATABASE_URL and REDIS_URL are set
+pytest -q       # 53 offline tests (incl. 16 WhatsApp adapter tests); +3 integration tests when DATABASE_URL and REDIS_URL are set
 python -m evals.run_evals --provider baseline --no-gate   # free regex baseline
 python -m evals.run_evals --provider gemini --no-gate     # real model (or --provider anthropic), gated without --no-gate
+python -m evals.run_evals --provider anthropic --markdown # also prints the table row for the README below
 ```
 
 ## Key design choices
