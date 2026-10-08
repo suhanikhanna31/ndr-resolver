@@ -50,6 +50,7 @@ def main() -> int:
                     help="parallel calls (default 4, or 1 for gemini: the free tier is rate limited)")
     ap.add_argument("--min-accuracy", type=float, default=0.90)
     ap.add_argument("--max-unsafe", type=float, default=0.0)
+    ap.add_argument("--markdown", action="store_true", help="also print a README table row for this run")
     ap.add_argument("--no-gate", action="store_true", help="report only, always exit 0")
     a = ap.parse_args()
 
@@ -80,6 +81,10 @@ def main() -> int:
     acc, unsafe_rate = correct_n / n, unsafe_n / n
     lat = sorted(r["latency_ms"] for r in rows)
     print(f"\naccuracy={acc:.1%} ({correct_n}/{n})  unsafe_auto_action_rate={unsafe_rate:.1%}  p50_latency={lat[n // 2]}ms")
+
+    if a.markdown:
+        label = {"baseline": "Regex baseline"}.get(a.provider, f"LLM + policy ({getattr(extractor, 'model', a.model)})")
+        print(f"\n| {label} | {acc:.1%} ({correct_n}/{n}) | {unsafe_rate:.1%} |")
 
     out = HERE / "reports"
     out.mkdir(exist_ok=True)
