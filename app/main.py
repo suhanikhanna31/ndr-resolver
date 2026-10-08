@@ -16,6 +16,7 @@ from .config import get_settings
 from .resolver import DEFAULT_POLICY
 from .schemas import Decision, FeedbackRequest, NDRRequest
 from .service import DecisionService, build_service
+from .whatsapp import WhatsAppState, admin_router as wa_admin_router, webhook_router as wa_webhook_router
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 
@@ -24,6 +25,7 @@ logging.basicConfig(level=logging.INFO, format="%(message)s")
 async def lifespan(app: FastAPI):
     s = get_settings()
     app.state.service = await build_service(s)
+    app.state.wa = WhatsAppState.from_env()
     app.state.queue = await create_pool(RedisSettings.from_dsn(s.redis_url)) if s.redis_url else None
     yield
     if app.state.queue:
@@ -131,6 +133,8 @@ async def stats(days: int = 7, svc: DecisionService = Depends(get_service)):
 
 
 app.include_router(router)
+app.include_router(wa_webhook_router)  # authenticated by Meta's HMAC signature, not X-API-Key
+app.include_router(wa_admin_router, dependencies=[Depends(require_key)])
 
 # Frontend: plain static files, no build step. Mounted last so API routes always win.
 app.mount("/", StaticFiles(directory=Path(__file__).parent / "static", html=True), name="ui")
