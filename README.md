@@ -129,7 +129,6 @@ store or the evals will be inflated. Changing the embedding model means re-embed
 | System | Accuracy | Wrong auto-actions |
 |---|---|---|
 | Regex baseline | 73.3% | 13.3% (wrongly cancels "don't cancel" replies) |
-| LLM + policy | *run `evals.run_evals --provider anthropic` and paste here* | gate: 0% |
 
 ## Next steps
 Review queue for escalated cases, HNSW index + threshold tuning, retrieval-on/off eval comparison, Prometheus metrics, Hindi-script and regional-language cases.
