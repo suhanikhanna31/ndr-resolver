@@ -112,15 +112,6 @@ python -m evals.run_evals --provider anthropic --markdown # also prints the tabl
 - **PII.** Phone numbers and pincodes are redacted before embedding; free-text addresses are never indexed. Logs carry decisions, not utterances.
 - **Feedback endpoint is a poisoning surface.** Whoever can POST feedback controls few-shot examples, so set `API_KEY` in any shared environment.
 
-## Verified vs not verified
-| | Status |
-|---|---|
-| Unit tests, policy, dates, redaction, prompt safety | Pass |
-| Postgres 16 + pgvector 0.6 + Redis 7: feedback → retrieval, idempotency, queue dedup, worker, stats | Pass (integration tests, real services) |
-| `uvicorn` + `arq` as separate processes, end to end | Run manually, fail-safe path verified with a dummy API key |
-| Call kwargs checked against the installed Anthropic SDK signature | Pass (regression test) |
-| **Real Claude responses, retrieval quality on real Hinglish, `docker compose up --build`** | **Not run by the author.** Run the evals with your key |
-
 Known limits: `RETRIEVAL_MAX_DISTANCE=0.35` is untuned. Tune it on held-out data, and keep golden eval cases out of the feedback
 store or the evals will be inflated. Changing the embedding model means re-embedding (drop `resolved_examples`). Add an HNSW index
 (`aapply_vector_index`) once the table passes ~10k rows.
